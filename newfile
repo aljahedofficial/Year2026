@@ -1,0 +1,713 @@
+import os
+import re
+import tkinter as tk
+from collections import Counter
+from tkinter import filedialog, messagebox, ttk
+from typing import Dict, List, Tuple
+
+import nltk
+import PyPDF2
+from nltk import pos_tag, sent_tokenize, word_tokenize
+from nltk.corpus import stopwords
+
+# Download required NLTK data
+nltk.download("punkt", quiet=True)
+nltk.download("averaged_perceptron_tagger", quiet=True)
+nltk.download("stopwords", quiet=True)
+nltk.download("punkt_tab", quiet=True)
+nltk.download("averaged_perceptron_tagger_eng", quiet=True)
+
+# Define linguistic categories
+MODAL_VERBS = {
+    "can",
+    "could",
+    "may",
+    "might",
+    "must",
+    "shall",
+    "should",
+    "will",
+    "would",
+    "ought",
+}
+
+COHESIVE_DEVICES = {
+    "additive": [
+        "and",
+        "also",
+        "moreover",
+        "furthermore",
+        "in addition",
+        "besides",
+        "additionally",
+        "as well as",
+        "too",
+        "likewise",
+    ],
+    "adversative": [
+        "but",
+        "however",
+        "yet",
+        "nevertheless",
+        "nonetheless",
+        "although",
+        "though",
+        "even though",
+        "on the other hand",
+        "in contrast",
+        "conversely",
+        "whereas",
+        "while",
+        "despite",
+        "in spite of",
+    ],
+    "causal": [
+        "because",
+        "since",
+        "therefore",
+        "thus",
+        "hence",
+        "consequently",
+        "as a result",
+        "so",
+        "accordingly",
+        "for this reason",
+        "due to",
+        "owing to",
+    ],
+    "temporal": [
+        "then",
+        "next",
+        "after",
+        "before",
+        "finally",
+        "meanwhile",
+        "subsequently",
+        "previously",
+        "first",
+        "second",
+        "third",
+        "lastly",
+        "initially",
+        "eventually",
+        "afterwards",
+    ],
+    "clarifying": [
+        "that is",
+        "in other words",
+        "namely",
+        "specifically",
+        "for example",
+        "for instance",
+        "such as",
+        "i.e.",
+        "e.g.",
+    ],
+    "summarizing": [
+        "in conclusion",
+        "to summarize",
+        "in summary",
+        "to sum up",
+        "overall",
+        "in brief",
+        "to conclude",
+    ],
+}
+
+
+def extract_text_from_pdf(pdf_path: str) -> str:
+    """Extract all text from a PDF file."""
+    text = ""
+    try:
+        with open(pdf_path, "rb") as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            for page in pdf_reader.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    text += page_text + "\n"
+    except Exception as e:
+        print(f"Error reading {pdf_path}: {e}")
+    return text
+
+
+def get_word_frequency(words: List[str], include_stopwords: bool = False) -> Counter:
+    """Calculate word frequency."""
+    if not include_stopwords:
+        stop_words = set(stopwords.words("english"))
+        words = [w for w in words if w.lower() not in stop_words]
+    return Counter(word.lower() for word in words if word.isalpha())
+
+
+def extract_verbs(tagged_words: List[Tuple[str, str]]) -> Dict[str, List[str]]:
+    """Extract different types of verbs from POS-tagged words."""
+    verbs = {
+        "base_form": [],  # VB
+        "past_tense": [],  # VBD
+        "gerund": [],  # VBG
+        "past_participle": [],  # VBN
+        "present_3rd": [],  # VBZ
+        "present_non_3rd": [],  # VBP
+    }
+
+    verb_tags = {
+        "VB": "base_form",
+        "VBD": "past_tense",
+        "VBG": "gerund",
+        "VBN": "past_participle",
+        "VBZ": "present_3rd",
+        "VBP": "present_non_3rd",
+    }
+
+    for word, tag in tagged_words:
+        if tag in verb_tags:
+            verbs[verb_tags[tag]].append(word.lower())
+
+    return verbs
+
+
+def find_passive_voice(sentences: List[str]) -> List[str]:
+    """Detect passive voice constructions."""
+    passive_sentences = []
+    be_verbs = {"am", "is", "are", "was", "were", "be", "been", "being"}
+
+    for sentence in sentences:
+        words = word_tokenize(sentence.lower())
+        tagged = pos_tag(words)
+
+        for i in range(len(tagged) - 1):
+            word, tag = tagged[i]
+            next_word, next_tag = tagged[i + 1]
+
+            # Pattern: be verb + past participle (VBN)
+            if word in be_verbs and next_tag == "VBN":
+                passive_sentences.append(sentence.strip())
+                break
+
+            # Pattern: be verb + adverb + past participle
+            if (
+                word in be_verbs
+                and next_tag in ["RB", "RBR", "RBS"]
+                and i + 2 < len(tagged)
+            ):
+                if tagged[i + 2][1] == "VBN":
+                    passive_sentences.append(sentence.strip())
+                    break
+
+    return passive_sentences
+
+
+def find_modal_verbs(words: List[str]) -> Dict[str, int]:
+    """Find and count modal verbs."""
+    modal_counts = {}
+    for word in words:
+        if word.lower() in MODAL_VERBS:
+            modal_counts[word.lower()] = modal_counts.get(word.lower(), 0) + 1
+    return modal_counts
+
+
+def find_cohesive_devices(text: str) -> Dict[str, Dict[str, int]]:
+    """Find and categorize cohesive devices in the text."""
+    text_lower = text.lower()
+    found_devices = {}
+
+    for category, devices in COHESIVE_DEVICES.items():
+        found_devices[category] = {}
+        for device in devices:
+            # Use word boundary matching for single words, phrase matching for multi-word
+            if " " in device:
+                count = text_lower.count(device)
+            else:
+                pattern = r"\b" + re.escape(device) + r"\b"
+                count = len(re.findall(pattern, text_lower))
+
+            if count > 0:
+                found_devices[category][device] = count
+
+    return found_devices
+
+
+def analyze_text(text: str) -> Dict:
+    """Perform comprehensive text analysis."""
+    # Tokenize
+    sentences = sent_tokenize(text)
+    words = word_tokenize(text)
+    tagged_words = pos_tag(words)
+
+    # Filter to only alphabetic words for some analyses
+    alpha_words = [w for w in words if w.isalpha()]
+
+    analysis = {
+        "basic_stats": {
+            "total_characters": len(text),
+            "total_words": len(alpha_words),
+            "total_sentences": len(sentences),
+            "unique_words": len(set(w.lower() for w in alpha_words)),
+            "avg_word_length": (
+                sum(len(w) for w in alpha_words) / len(alpha_words)
+                if alpha_words
+                else 0
+            ),
+            "avg_sentence_length": (
+                len(alpha_words) / len(sentences) if sentences else 0
+            ),
+        },
+        "word_frequency": get_word_frequency(alpha_words, include_stopwords=False),
+        "word_frequency_with_stopwords": get_word_frequency(
+            alpha_words, include_stopwords=True
+        ),
+        "verbs": extract_verbs(tagged_words),
+        "passive_voice": find_passive_voice(sentences),
+        "modal_verbs": find_modal_verbs(words),
+        "cohesive_devices": find_cohesive_devices(text),
+    }
+
+    return analysis
+
+
+def print_analysis(analysis: Dict, filename: str = ""):
+    """Legacy console printer (kept for compatibility)."""
+    print("\n" + "=" * 80)
+    if filename:
+        print(f"ANALYSIS FOR: {filename}")
+    print("=" * 80)
+
+    # Basic Statistics
+    print("\n📊 BASIC STATISTICS")
+    print("-" * 40)
+    stats = analysis["basic_stats"]
+    print(f"  Total Characters: {stats['total_characters']:,}")
+    print(f"  Total Words: {stats['total_words']:,}")
+    print(f"  Total Sentences: {stats['total_sentences']:,}")
+    print(f"  Unique Words: {stats['unique_words']:,}")
+    print(f"  Average Word Length: {stats['avg_word_length']:.2f}")
+    print(f"  Average Sentence Length: {stats['avg_sentence_length']:.2f} words")
+
+    # Word Frequency (Top 20)
+    print("\n📈 TOP 20 MOST FREQUENT WORDS (excluding stopwords)")
+    print("-" * 40)
+    for word, count in analysis["word_frequency"].most_common(20):
+        print(f"  {word}: {count}")
+
+    # Verbs Analysis
+    print("\n🔤 VERB ANALYSIS")
+    print("-" * 40)
+    verbs = analysis["verbs"]
+    for verb_type, verb_list in verbs.items():
+        unique_verbs = list(set(verb_list))
+        print(
+            f"\n  {verb_type.replace('_', ' ').title()} ({len(verb_list)} total, {len(unique_verbs)} unique):"
+        )
+        if unique_verbs:
+            verb_freq = Counter(verb_list).most_common(10)
+            print(f"    Top 10: {', '.join(f'{v}({c})' for v, c in verb_freq)}")
+
+    # Passive Voice
+    print("\n🔄 PASSIVE VOICE CONSTRUCTIONS")
+    print("-" * 40)
+    passive = analysis["passive_voice"]
+    print(f"  Total passive constructions found: {len(passive)}")
+    if passive:
+        print("  Examples (first 5):")
+        for sentence in passive[:5]:
+            truncated = sentence[:100] + "..." if len(sentence) > 100 else sentence
+            print(f"    • {truncated}")
+
+    # Modal Verbs
+    print("\n🎯 MODAL VERBS")
+    print("-" * 40)
+    modals = analysis["modal_verbs"]
+    if modals:
+        total_modals = sum(modals.values())
+        print(f"  Total modal verbs: {total_modals}")
+        for modal, count in sorted(modals.items(), key=lambda x: x[1], reverse=True):
+            percentage = (count / total_modals) * 100
+            print(f"    {modal}: {count} ({percentage:.1f}%)")
+    else:
+        print("  No modal verbs found.")
+
+    # Cohesive Devices
+    print("\n🔗 COHESIVE DEVICES")
+    print("-" * 40)
+    devices = analysis["cohesive_devices"]
+    for category, found in devices.items():
+        if found:
+            total = sum(found.values())
+            print(f"\n  {category.title()} ({total} total):")
+            for device, count in sorted(
+                found.items(), key=lambda x: x[1], reverse=True
+            ):
+                print(f"    {device}: {count}")
+
+
+def get_pdf_files() -> List[str]:
+    """Select PDF files using a file dialog."""
+    root = tk.Tk()
+    root.withdraw()
+
+    try:
+        pdf_files = filedialog.askopenfilenames(
+            title="Select PDF files to analyze",
+            filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")],
+        )
+    finally:
+        root.destroy()
+
+    return list(pdf_files)
+
+
+def _format_number(n: float | int) -> str:
+    try:
+        return f"{n:,}"
+    except Exception:
+        return str(n)
+
+
+class PdfAnalyzerApp(tk.Tk):
+    def __init__(self):
+        super().__init__()
+
+        self.title("PDF Text Analyzer")
+        self.geometry("1100x750")
+        self.minsize(900, 600)
+
+        self.pdf_files: List[str] = []
+        self.individual_analyses: List[Tuple[str, Dict]] = []
+        self.combined_text: str | None = None
+        self.combined_analysis: Dict | None = None
+
+        self._build_ui()
+
+    def _build_ui(self):
+        top = ttk.Frame(self, padding=10)
+        top.pack(fill="x")
+
+        ttk.Button(top, text="Select PDFs…", command=self.on_select_files).pack(
+            side="left"
+        )
+        ttk.Button(top, text="Analyze", command=self.on_analyze).pack(
+            side="left", padx=(8, 0)
+        )
+        ttk.Button(top, text="Export Results…", command=self.on_export).pack(
+            side="left", padx=(8, 0)
+        )
+
+        self.files_label = ttk.Label(top, text="No files selected")
+        self.files_label.pack(side="left", padx=(12, 0))
+
+        self.status_var = tk.StringVar(value="Ready")
+        ttk.Label(self, textvariable=self.status_var, anchor="w", padding=(10, 0)).pack(
+            fill="x"
+        )
+
+        self.notebook = ttk.Notebook(self)
+        self.notebook.pack(fill="both", expand=True, padx=10, pady=10)
+
+        self.tab_summary = ttk.Frame(self.notebook)
+        self.tab_top_words = ttk.Frame(self.notebook)
+        self.tab_verbs = ttk.Frame(self.notebook)
+        self.tab_passive = ttk.Frame(self.notebook)
+        self.tab_modals = ttk.Frame(self.notebook)
+        self.tab_cohesion = ttk.Frame(self.notebook)
+
+        self.notebook.add(self.tab_summary, text="Summary")
+        self.notebook.add(self.tab_top_words, text="Top Words")
+        self.notebook.add(self.tab_verbs, text="Verbs")
+        self.notebook.add(self.tab_passive, text="Passive Voice")
+        self.notebook.add(self.tab_modals, text="Modals")
+        self.notebook.add(self.tab_cohesion, text="Cohesive Devices")
+
+        # Summary widgets
+        self.summary_tree = ttk.Treeview(
+            self.tab_summary,
+            columns=("metric", "value"),
+            show="headings",
+            height=10,
+        )
+        self.summary_tree.heading("metric", text="Metric")
+        self.summary_tree.heading("value", text="Value")
+        self.summary_tree.column("metric", width=350, anchor="w")
+        self.summary_tree.column("value", width=200, anchor="e")
+        self.summary_tree.pack(fill="x", padx=10, pady=10)
+
+        self.summary_note = ttk.Label(
+            self.tab_summary,
+            text="Tip: If you select multiple PDFs, results are shown as a combined analysis.",
+            wraplength=900,
+        )
+        self.summary_note.pack(fill="x", padx=10, pady=(0, 10))
+
+        # Shared helper to build a scrollable tree
+        def make_tree(parent: ttk.Frame, col1: str, col2: str):
+            container = ttk.Frame(parent)
+            container.pack(fill="both", expand=True, padx=10, pady=10)
+
+            tree = ttk.Treeview(container, columns=(col1, col2), show="headings")
+            tree.heading(col1, text=col1)
+            tree.heading(col2, text=col2)
+            tree.column(col1, width=500, anchor="w")
+            tree.column(col2, width=150, anchor="e")
+
+            yscroll = ttk.Scrollbar(container, orient="vertical", command=tree.yview)
+            tree.configure(yscrollcommand=yscroll.set)
+
+            tree.pack(side="left", fill="both", expand=True)
+            yscroll.pack(side="right", fill="y")
+            return tree
+
+        self.words_tree = make_tree(self.tab_top_words, "Word", "Count")
+        self.modals_tree = make_tree(self.tab_modals, "Modal", "Count")
+
+        # Verbs tab: grouped by verb type
+        verbs_container = ttk.Frame(self.tab_verbs)
+        verbs_container.pack(fill="both", expand=True, padx=10, pady=10)
+        self.verbs_notebook = ttk.Notebook(verbs_container)
+        self.verbs_notebook.pack(fill="both", expand=True)
+        self.verb_trees: Dict[str, ttk.Treeview] = {}
+        for verb_type in [
+            "base_form",
+            "past_tense",
+            "gerund",
+            "past_participle",
+            "present_3rd",
+            "present_non_3rd",
+        ]:
+            frame = ttk.Frame(self.verbs_notebook)
+            self.verbs_notebook.add(frame, text=verb_type.replace("_", " ").title())
+            self.verb_trees[verb_type] = make_tree(frame, "Verb", "Count")
+
+        # Passive tab: listbox-like text
+        passive_container = ttk.Frame(self.tab_passive)
+        passive_container.pack(fill="both", expand=True, padx=10, pady=10)
+        self.passive_text = tk.Text(passive_container, wrap="word")
+        passive_scroll = ttk.Scrollbar(
+            passive_container, orient="vertical", command=self.passive_text.yview
+        )
+        self.passive_text.configure(yscrollcommand=passive_scroll.set)
+        self.passive_text.pack(side="left", fill="both", expand=True)
+        passive_scroll.pack(side="right", fill="y")
+        self.passive_text.configure(state="disabled")
+
+        # Cohesion tab: grouped by category (tree with 3 cols)
+        cohesion_container = ttk.Frame(self.tab_cohesion)
+        cohesion_container.pack(fill="both", expand=True, padx=10, pady=10)
+        self.cohesion_tree = ttk.Treeview(
+            cohesion_container,
+            columns=("category", "device", "count"),
+            show="headings",
+        )
+        self.cohesion_tree.heading("category", text="Category")
+        self.cohesion_tree.heading("device", text="Device")
+        self.cohesion_tree.heading("count", text="Count")
+        self.cohesion_tree.column("category", width=160, anchor="w")
+        self.cohesion_tree.column("device", width=520, anchor="w")
+        self.cohesion_tree.column("count", width=120, anchor="e")
+        coh_scroll = ttk.Scrollbar(
+            cohesion_container, orient="vertical", command=self.cohesion_tree.yview
+        )
+        self.cohesion_tree.configure(yscrollcommand=coh_scroll.set)
+        self.cohesion_tree.pack(side="left", fill="both", expand=True)
+        coh_scroll.pack(side="right", fill="y")
+
+    def set_status(self, text: str):
+        self.status_var.set(text)
+        self.update_idletasks()
+
+    def on_select_files(self):
+        files = get_pdf_files()
+        if not files:
+            return
+        self.pdf_files = files
+        if len(files) == 1:
+            self.files_label.configure(text=os.path.basename(files[0]))
+        else:
+            self.files_label.configure(text=f"{len(files)} files selected")
+        self.set_status("Files selected. Click Analyze.")
+
+    def on_analyze(self):
+        if not self.pdf_files:
+            messagebox.showwarning(
+                "No files", "Please select one or more PDF files first."
+            )
+            return
+
+        self.set_status(f"Analyzing {len(self.pdf_files)} PDF(s)…")
+        self.individual_analyses.clear()
+
+        all_text = ""
+        for i, pdf_path in enumerate(self.pdf_files, start=1):
+            self.set_status(
+                f"Extracting text ({i}/{len(self.pdf_files)}): {os.path.basename(pdf_path)}"
+            )
+            text = extract_text_from_pdf(pdf_path)
+            if text.strip():
+                all_text += text + "\n"
+                self.individual_analyses.append((pdf_path, analyze_text(text)))
+
+        if not all_text.strip():
+            messagebox.showerror(
+                "No text extracted",
+                "No text could be extracted from the selected PDFs.",
+            )
+            self.set_status("Ready")
+            return
+
+        self.combined_text = all_text if len(self.pdf_files) > 1 else None
+        self.set_status("Computing combined analysis…")
+        self.combined_analysis = analyze_text(all_text)
+
+        self._render_results(self.combined_analysis)
+        self.set_status("Done")
+
+    def _clear_tree(self, tree: ttk.Treeview):
+        for item in tree.get_children():
+            tree.delete(item)
+
+    def _render_results(self, analysis: Dict):
+        # Summary
+        self._clear_tree(self.summary_tree)
+        stats = analysis.get("basic_stats", {})
+        rows = [
+            ("Total Characters", _format_number(stats.get("total_characters", 0))),
+            ("Total Words", _format_number(stats.get("total_words", 0))),
+            ("Total Sentences", _format_number(stats.get("total_sentences", 0))),
+            ("Unique Words", _format_number(stats.get("unique_words", 0))),
+            ("Average Word Length", f"{stats.get('avg_word_length', 0):.2f}"),
+            (
+                "Average Sentence Length (words)",
+                f"{stats.get('avg_sentence_length', 0):.2f}",
+            ),
+            (
+                "Modal Verbs (total)",
+                _format_number(sum(analysis.get("modal_verbs", {}).values())),
+            ),
+            (
+                "Passive Voice (instances)",
+                _format_number(len(analysis.get("passive_voice", []))),
+            ),
+        ]
+        for metric, value in rows:
+            self.summary_tree.insert("", "end", values=(metric, value))
+
+        # Top Words (top 100)
+        self._clear_tree(self.words_tree)
+        wf: Counter = analysis.get("word_frequency", Counter())
+        for word, count in wf.most_common(100):
+            self.words_tree.insert("", "end", values=(word, _format_number(count)))
+
+        # Modals
+        self._clear_tree(self.modals_tree)
+        modals: Dict[str, int] = analysis.get("modal_verbs", {})
+        for modal, count in sorted(modals.items(), key=lambda x: x[1], reverse=True):
+            self.modals_tree.insert("", "end", values=(modal, _format_number(count)))
+
+        # Verbs (top 50 each)
+        verbs: Dict[str, List[str]] = analysis.get("verbs", {})
+        for verb_type, tree in self.verb_trees.items():
+            self._clear_tree(tree)
+            items = verbs.get(verb_type, [])
+            for v, c in Counter(items).most_common(50):
+                tree.insert("", "end", values=(v, _format_number(c)))
+
+        # Passive voice examples
+        passive = analysis.get("passive_voice", [])
+        self.passive_text.configure(state="normal")
+        self.passive_text.delete("1.0", "end")
+        self.passive_text.insert(
+            "end",
+            f"Passive voice constructions found: {len(passive)}\n\n",
+        )
+        for idx, sent in enumerate(passive, start=1):
+            self.passive_text.insert("end", f"{idx}. {sent.strip()}\n\n")
+        self.passive_text.configure(state="disabled")
+
+        # Cohesive devices
+        self._clear_tree(self.cohesion_tree)
+        devices = analysis.get("cohesive_devices", {})
+        for category, found in devices.items():
+            for device, count in sorted(
+                found.items(), key=lambda x: x[1], reverse=True
+            ):
+                self.cohesion_tree.insert(
+                    "", "end", values=(category, device, _format_number(count))
+                )
+
+    def on_export(self):
+        if not self.individual_analyses:
+            messagebox.showinfo(
+                "Nothing to export", "Run an analysis first, then export the results."
+            )
+            return
+
+        output_path = filedialog.asksaveasfilename(
+            title="Save analysis results",
+            defaultextension=".txt",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+            initialfile="pdf_analysis_results.txt",
+        )
+        if not output_path:
+            return
+
+        export_results_to_path(
+            output_path,
+            self.individual_analyses,
+            combined_text=self.combined_text,
+        )
+        messagebox.showinfo("Exported", f"Saved results to:\n{output_path}")
+
+
+def export_results_to_path(
+    output_file: str,
+    analyses: List[Tuple[str, Dict]],
+    combined_text: str | None = None,
+):
+    """Export analysis results to a text file."""
+    with open(output_file, "w", encoding="utf-8") as f:
+        f.write("PDF TEXT ANALYSIS RESULTS\n")
+        f.write("=" * 80 + "\n\n")
+
+        for pdf_path, analysis in analyses:
+            f.write(f"\nFILE: {os.path.basename(pdf_path)}\n")
+            f.write("-" * 40 + "\n")
+
+            # Basic stats
+            stats = analysis["basic_stats"]
+            f.write(f"Total Words: {stats['total_words']}\n")
+            f.write(f"Total Sentences: {stats['total_sentences']}\n")
+            f.write(f"Unique Words: {stats['unique_words']}\n")
+
+            # Top words
+            f.write("\nTop 50 Words:\n")
+            for word, count in analysis["word_frequency"].most_common(50):
+                f.write(f"  {word}: {count}\n")
+
+            # Modal verbs
+            f.write("\nModal Verbs:\n")
+            for modal, count in analysis["modal_verbs"].items():
+                f.write(f"  {modal}: {count}\n")
+
+            # Passive voice count
+            f.write(f"\nPassive Voice Instances: {len(analysis['passive_voice'])}\n")
+
+            # Cohesive devices
+            f.write("\nCohesive Devices:\n")
+            for category, devices in analysis["cohesive_devices"].items():
+                if devices:
+                    f.write(f"  {category}:\n")
+                    for device, count in devices.items():
+                        f.write(f"    {device}: {count}\n")
+
+            f.write("\n" + "=" * 80 + "\n")
+
+
+# Backwards-compatible name (previous CLI function)
+def export_results(analyses: List[Tuple[str, Dict]], combined_text: str = None):
+    export_results_to_path("pdf_analysis_results.txt", analyses, combined_text)
+
+
+def main():
+    app = PdfAnalyzerApp()
+    app.mainloop()
+
+
+if __name__ == "__main__":
+    main()

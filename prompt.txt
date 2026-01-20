@@ -1,0 +1,12 @@
+"I am an MA English student working on a thesis titled 'When Machines Mistake Humans: Stylistic Analysis of False Positives in AI Detection'. I need you to write a single-file React web app (using shadcn/ui style) that acts as a 'Stylistic Fingerprint Analyzer' for my research.
+The Goal: The app should take a pasted text (e.g., a student essay) or prompt the user to give mutilple files (txt, doc, docx, pdf etc) and analyze the specific linguistic features that trigger false positives in AI detectors.
+The Interface & Terminology (Strictly Linguistic Focus): Please avoid computer science jargon. Use the following labels and metrics based on my research framework:
+1. Input Area: Label this 'Corpus Input / Text Sample'.
+2. Metric 1: Lexical Diversity (Type-Token Ratio): Calculate the richness of vocabulary. Low diversity often triggers AI flags.
+3. Metric 2: Syntactic Variety (Burstiness): visualized as a chart showing the length of every sentence in the text. This shows the 'rhythm' of the prose.
+4. Metric 3: Interactional Markers (Hyland’s Metadiscourse): Highlight words like 'however,' 'therefore,' 'arguably,' and 'in my opinion.' These show Writer Identity.
+5. Metric 4: Sentence Complexity: Count the average words per sentence.
+Visualization: Create a dynamic graph titled 'Writer Identity Spectrum' that plots the text's 'Sentence Variation' (Standard Deviation of sentence length).
+6. Give options to export the anayisis as docfile, excel file, png file, or pdf file.
+Output: Provide the complete code as a single Functional React Component that I can run as an Artifact. It should look like a clean, academic dashboard."
+
