@@ -12,7 +12,8 @@ import {
     Scatter,
     ScatterChart,
     Tooltip,
-    XAxis, YAxis
+    XAxis,
+    YAxis
 } from 'recharts';
 
 const StylisticFingerprintAnalyzer = () => {
@@ -21,6 +22,13 @@ const StylisticFingerprintAnalyzer = () => {
     const [selectedTextIndex, setSelectedTextIndex] = useState(0);
     const [pastedText, setPastedText] = useState('');
     const [isProcessing, setIsProcessing] = useState(false);
+    const [thresholds, setThresholds] = useState({
+        cvVeto: 0.18,
+        cvHuman: 0.30,
+        sttr: 0.45,
+        mdDensity: 10.0
+    });
+    const [showCalibration, setShowCalibration] = useState(false);
     const chartRef = useRef(null);
 
     // Metadiscourse categories based on Hyland (2005)
@@ -127,7 +135,7 @@ const StylisticFingerprintAnalyzer = () => {
     };
 
     // Main analysis function
-    const analyzeText = (text, filename = 'Pasted Text') => {
+    const analyzeText = (text, filename = 'Pasted Text', currentThresholds = thresholds) => {
         const tokens = tokenize(text);
         const sentences = splitSentences(text);
         const sentenceLengths = sentences.map(s => tokenize(s).length);
@@ -155,20 +163,32 @@ const StylisticFingerprintAnalyzer = () => {
             }
         });
 
-        // Stylistic risk assessment
+        // Stylistic risk assessment with Veto Logic
+        // 1. CV Veto (Highest Priority)
+        let overallRisk = 'Mixed Stylistic Signals - Inconclusive';
+        const cvStatus = cv < currentThresholds.cvVeto ? 'AI-like' : cv > currentThresholds.cvHuman ? 'Human-like' : 'Ambiguous';
+
+        // Logic: if CV < cvVeto -> AI / HIGH RISK
+        if (cv < currentThresholds.cvVeto) {
+            overallRisk = 'AI / HIGH RISK';
+        } else {
+            // 2. Human Threshold: CV > cvHuman AND MD > mdDensityThreshold
+            if (cv > currentThresholds.cvHuman && metadiscourse.density > currentThresholds.mdDensity) {
+                overallRisk = 'HUMAN';
+            } else if ((cv >= currentThresholds.cvVeto && cv <= currentThresholds.cvHuman) || (metadiscourse.density <= currentThresholds.mdDensity)) {
+                // 3. Borderline Zone
+                // Logic check: if it didn't pass "Human" check but wasn't Vetoed, check if it's explicitly strictly in borderline ranges
+                // For simplicity from prompt: "If the text falls between these ranges... label as BORDERLINE"
+                // This acts as the catch-all for non-Veto, non-Human
+                overallRisk = 'BORDERLINE';
+            }
+        }
+
         const riskAssessment = {
-            cvStatus: cv > 0.30 ? 'Human-like' : cv < 0.20 ? 'AI-like' : 'Ambiguous',
+            cvStatus: cvStatus,
             sttrStatus: sttr > 0.50 ? 'Human-like' : sttr < 0.40 ? 'AI-like' : 'Ambiguous',
             metadiscourseStatus: metadiscourse.density > 10 ? 'Human-like' : metadiscourse.density < 5 ? 'AI-like' : 'Ambiguous'
         };
-
-        const overallRisk = [riskAssessment.cvStatus, riskAssessment.sttrStatus, riskAssessment.metadiscourseStatus]
-            .filter(s => s === 'Human-like').length >= 2
-            ? 'High Stylistic Variation Detected - Likely Human'
-            : [riskAssessment.cvStatus, riskAssessment.sttrStatus, riskAssessment.metadiscourseStatus]
-                .filter(s => s === 'AI-like').length >= 2
-                ? 'Low Stylistic Variation Detected - Likely AI'
-                : 'Mixed Stylistic Signals - Inconclusive';
 
         return {
             filename,
@@ -184,14 +204,15 @@ const StylisticFingerprintAnalyzer = () => {
             overallRisk,
             avgSentenceLength: sentenceLengths.length > 0
                 ? (sentenceLengths.reduce((a, b) => a + b, 0) / sentenceLengths.length).toFixed(2)
-                : 0
+                : 0,
+            thresholdsUsed: currentThresholds
         };
     };
 
     // Handle pasted text
     const handlePasteAnalysis = () => {
         if (!pastedText.trim()) return;
-        const analysis = analyzeText(pastedText, `Pasted Text ${texts.length + 1}`);
+        const analysis = analyzeText(pastedText, `Pasted Text ${texts.length + 1}`, thresholds);
         setTexts([...texts, analysis]);
         setPastedText('');
         setSelectedTextIndex(texts.length);
@@ -206,7 +227,7 @@ const StylisticFingerprintAnalyzer = () => {
             const reader = new FileReader();
             reader.onload = (event) => {
                 const text = event.target.result;
-                const analysis = analyzeText(text, file.name);
+                const analysis = analyzeText(text, file.name, thresholds);
                 setTexts(prev => [...prev, analysis]);
             };
             reader.readAsText(file);
@@ -237,6 +258,16 @@ const StylisticFingerprintAnalyzer = () => {
     const exportToCSV = () => {
         if (texts.length === 0) return;
 
+        // Threshold settings header
+        const thresholdInfo = [
+            `Calibration Settings Used:`,
+            `CV Veto Threshold: ${thresholds.cvVeto}`,
+            `CV Human Threshold: ${thresholds.cvHuman}`,
+            `STTR Threshold: ${thresholds.sttr}`,
+            `MD Density Threshold: ${thresholds.mdDensity}`,
+            '', // Empty line separator
+        ];
+
         const headers = ['Filename', 'Word Count', 'Sentence Count', 'STTR', 'CV', 'Metadiscourse Density', 'Avg Sentence Length', 'Risk Assessment'];
         const rows = texts.map(t => [
             t.filename,
@@ -249,7 +280,7 @@ const StylisticFingerprintAnalyzer = () => {
             t.overallRisk
         ]);
 
-        const csvContent = [headers, ...rows].map(row => row.join(',')).join('\n');
+        const csvContent = [...thresholdInfo, headers.join(','), ...rows.map(row => row.join(','))].join('\n');
         const blob = new Blob([csvContent], { type: 'text/csv' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -287,9 +318,19 @@ const StylisticFingerprintAnalyzer = () => {
                 'Risk Assessment': t.overallRisk
             }));
 
+            // Create threshold settings sheet
+            const thresholdData = [
+                { Setting: 'CV Veto Threshold', Value: thresholds.cvVeto },
+                { Setting: 'CV Human Threshold', Value: thresholds.cvHuman },
+                { Setting: 'STTR Threshold', Value: thresholds.sttr },
+                { Setting: 'MD Density Threshold', Value: thresholds.mdDensity }
+            ];
+
             const ws = window.XLSX.utils.json_to_sheet(data);
+            const wsThresholds = window.XLSX.utils.json_to_sheet(thresholdData);
             const wb = window.XLSX.utils.book_new();
             window.XLSX.utils.book_append_sheet(wb, ws, 'Analysis');
+            window.XLSX.utils.book_append_sheet(wb, wsThresholds, 'Calibration Settings');
             window.XLSX.writeFile(wb, 'stylistic_analysis.xlsx');
         } catch (error) {
             console.error('Error exporting to XLSX:', error);
@@ -336,18 +377,168 @@ const StylisticFingerprintAnalyzer = () => {
 
     const COLORS = ['#8884d8', '#82ca9d', '#ffc658', '#ff8042', '#a4de6c', '#d0ed57'];
 
+    // Calibration Sidebar Component
+    const CalibrationSidebar = () => (
+        <div className={`fixed top-0 right-0 h-full bg-white shadow-2xl transition-transform duration-300 z-50 ${showCalibration ? 'translate-x-0' : 'translate-x-full'} w-80 overflow-y-auto`}>
+            <div className="p-6">
+                <div className="flex justify-between items-center mb-6">
+                    <h2 className="text-xl font-bold text-slate-800">Calibration Panel</h2>
+                    <button
+                        onClick={() => setShowCalibration(false)}
+                        className="text-slate-500 hover:text-slate-700 text-2xl"
+                    >
+                        ×
+                    </button>
+                </div>
+
+                <div className="space-y-6">
+                    {/* CV Veto Threshold */}
+                    <div className="border-b pb-4">
+                        <label className="block text-sm font-semibold text-slate-700 mb-2">
+                            CV Veto Threshold
+                        </label>
+                        <p className="text-xs text-slate-500 mb-2">Below this = AI / HIGH RISK</p>
+                        <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            max="1"
+                            value={thresholds.cvVeto}
+                            onChange={(e) => setThresholds({ ...thresholds, cvVeto: parseFloat(e.target.value) })}
+                            className="w-full p-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-red-500"
+                        />
+                        <input
+                            type="range"
+                            min="0"
+                            max="1"
+                            step="0.01"
+                            value={thresholds.cvVeto}
+                            onChange={(e) => setThresholds({ ...thresholds, cvVeto: parseFloat(e.target.value) })}
+                            className="w-full mt-2"
+                        />
+                    </div>
+
+                    {/* CV Human Threshold */}
+                    <div className="border-b pb-4">
+                        <label className="block text-sm font-semibold text-slate-700 mb-2">
+                            CV Human Threshold
+                        </label>
+                        <p className="text-xs text-slate-500 mb-2">Above this + MD check = HUMAN</p>
+                        <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            max="1"
+                            value={thresholds.cvHuman}
+                            onChange={(e) => setThresholds({ ...thresholds, cvHuman: parseFloat(e.target.value) })}
+                            className="w-full p-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-green-500"
+                        />
+                        <input
+                            type="range"
+                            min="0"
+                            max="1"
+                            step="0.01"
+                            value={thresholds.cvHuman}
+                            onChange={(e) => setThresholds({ ...thresholds, cvHuman: parseFloat(e.target.value) })}
+                            className="w-full mt-2"
+                        />
+                    </div>
+
+                    {/* STTR Threshold */}
+                    <div className="border-b pb-4">
+                        <label className="block text-sm font-semibold text-slate-700 mb-2">
+                            STTR Threshold
+                        </label>
+                        <p className="text-xs text-slate-500 mb-2">Lexical diversity reference</p>
+                        <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            max="1"
+                            value={thresholds.sttr}
+                            onChange={(e) => setThresholds({ ...thresholds, sttr: parseFloat(e.target.value) })}
+                            className="w-full p-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-purple-500"
+                        />
+                        <input
+                            type="range"
+                            min="0"
+                            max="1"
+                            step="0.01"
+                            value={thresholds.sttr}
+                            onChange={(e) => setThresholds({ ...thresholds, sttr: parseFloat(e.target.value) })}
+                            className="w-full mt-2"
+                        />
+                    </div>
+
+                    {/* MD Density Threshold */}
+                    <div className="border-b pb-4">
+                        <label className="block text-sm font-semibold text-slate-700 mb-2">
+                            MD Density Threshold
+                        </label>
+                        <p className="text-xs text-slate-500 mb-2">Per 1,000 words</p>
+                        <input
+                            type="number"
+                            step="0.5"
+                            min="0"
+                            max="50"
+                            value={thresholds.mdDensity}
+                            onChange={(e) => setThresholds({ ...thresholds, mdDensity: parseFloat(e.target.value) })}
+                            className="w-full p-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-pink-500"
+                        />
+                        <input
+                            type="range"
+                            min="0"
+                            max="50"
+                            step="0.5"
+                            value={thresholds.mdDensity}
+                            onChange={(e) => setThresholds({ ...thresholds, mdDensity: parseFloat(e.target.value) })}
+                            className="w-full mt-2"
+                        />
+                    </div>
+
+                    {/* Reset Button */}
+                    <button
+                        onClick={() => setThresholds({
+                            cvVeto: 0.18,
+                            cvHuman: 0.30,
+                            sttr: 0.45,
+                            mdDensity: 10.0
+                        })}
+                        className="w-full px-4 py-2 bg-slate-600 text-white rounded-md hover:bg-slate-700 transition-colors"
+                    >
+                        Reset to Research Defaults
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 p-8">
             <div className="max-w-7xl mx-auto">
                 {/* Header */}
-                <header className="mb-8">
-                    <h1 className="text-4xl font-bold text-slate-800 mb-2">
-                        Stylistic Fingerprint Analyzer
-                    </h1>
-                    <p className="text-slate-600 italic">
-                        When Machines Mistake Humans: Stylistic Analysis of False Positives in AI Detection
-                    </p>
+                <header className="mb-8 flex justify-between items-center">
+                    <div>
+                        <h1 className="text-4xl font-bold text-slate-800 mb-2">
+                            Stylistic Fingerprint Analyzer
+                        </h1>
+                        <p className="text-slate-600 italic">
+                            When Machines Mistake Humans: Stylistic Analysis of False Positives in AI Detection
+                        </p>
+                    </div>
+                    <button
+                        onClick={() => setShowCalibration(true)}
+                        className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors flex items-center gap-2"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                            <path fillRule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
+                        </svg>
+                        Calibration
+                    </button>
                 </header>
+
+                {/* Calibration Sidebar */}
+                <CalibrationSidebar />
 
                 {/* Input Section */}
                 <div className="bg-white rounded-lg shadow-md p-6 mb-6">
@@ -421,8 +612,8 @@ const StylisticFingerprintAnalyzer = () => {
                             <button
                                 onClick={() => setActiveTab('individual')}
                                 className={`px-6 py-3 rounded-t-lg font-semibold transition-colors ${activeTab === 'individual'
-                                        ? 'bg-white text-blue-700 shadow-md'
-                                        : 'bg-slate-200 text-slate-600 hover:bg-slate-300'
+                                    ? 'bg-white text-blue-700 shadow-md'
+                                    : 'bg-slate-200 text-slate-600 hover:bg-slate-300'
                                     }`}
                             >
                                 Individual Files
@@ -430,8 +621,8 @@ const StylisticFingerprintAnalyzer = () => {
                             <button
                                 onClick={() => setActiveTab('combined')}
                                 className={`px-6 py-3 rounded-t-lg font-semibold transition-colors ${activeTab === 'combined'
-                                        ? 'bg-white text-blue-700 shadow-md'
-                                        : 'bg-slate-200 text-slate-600 hover:bg-slate-300'
+                                    ? 'bg-white text-blue-700 shadow-md'
+                                    : 'bg-slate-200 text-slate-600 hover:bg-slate-300'
                                     }`}
                             >
                                 Combined Corpus
@@ -500,10 +691,10 @@ const StylisticFingerprintAnalyzer = () => {
                                         <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
                                             <span className="font-medium">CV (Burstiness):</span>
                                             <span className={`px-3 py-1 rounded-full text-sm font-semibold ${currentText.riskAssessment.cvStatus === 'Human-like'
-                                                    ? 'bg-green-100 text-green-800'
-                                                    : currentText.riskAssessment.cvStatus === 'AI-like'
-                                                        ? 'bg-red-100 text-red-800'
-                                                        : 'bg-yellow-100 text-yellow-800'
+                                                ? 'bg-green-100 text-green-800'
+                                                : currentText.riskAssessment.cvStatus === 'AI-like'
+                                                    ? 'bg-red-100 text-red-800'
+                                                    : 'bg-yellow-100 text-yellow-800'
                                                 }`}>
                                                 {currentText.riskAssessment.cvStatus}
                                             </span>
@@ -511,10 +702,10 @@ const StylisticFingerprintAnalyzer = () => {
                                         <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
                                             <span className="font-medium">STTR (Lexical Diversity):</span>
                                             <span className={`px-3 py-1 rounded-full text-sm font-semibold ${currentText.riskAssessment.sttrStatus === 'Human-like'
-                                                    ? 'bg-green-100 text-green-800'
-                                                    : currentText.riskAssessment.sttrStatus === 'AI-like'
-                                                        ? 'bg-red-100 text-red-800'
-                                                        : 'bg-yellow-100 text-yellow-800'
+                                                ? 'bg-green-100 text-green-800'
+                                                : currentText.riskAssessment.sttrStatus === 'AI-like'
+                                                    ? 'bg-red-100 text-red-800'
+                                                    : 'bg-yellow-100 text-yellow-800'
                                                 }`}>
                                                 {currentText.riskAssessment.sttrStatus}
                                             </span>
@@ -522,10 +713,10 @@ const StylisticFingerprintAnalyzer = () => {
                                         <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
                                             <span className="font-medium">Metadiscourse Density:</span>
                                             <span className={`px-3 py-1 rounded-full text-sm font-semibold ${currentText.riskAssessment.metadiscourseStatus === 'Human-like'
-                                                    ? 'bg-green-100 text-green-800'
-                                                    : currentText.riskAssessment.metadiscourseStatus === 'AI-like'
-                                                        ? 'bg-red-100 text-red-800'
-                                                        : 'bg-yellow-100 text-yellow-800'
+                                                ? 'bg-green-100 text-green-800'
+                                                : currentText.riskAssessment.metadiscourseStatus === 'AI-like'
+                                                    ? 'bg-red-100 text-red-800'
+                                                    : 'bg-yellow-100 text-yellow-800'
                                                 }`}>
                                                 {currentText.riskAssessment.metadiscourseStatus}
                                             </span>
@@ -570,6 +761,21 @@ const StylisticFingerprintAnalyzer = () => {
                                                 <YAxis dataKey="metric" type="category" />
                                                 <Tooltip />
                                                 <Bar dataKey="value" fill="#82ca9d" />
+                                                {/* Reference Lines for CV Thresholds */}
+                                                <ReferenceLine
+                                                    x={thresholds.cvVeto}
+                                                    stroke="red"
+                                                    strokeWidth={2}
+                                                    strokeDasharray="5 5"
+                                                    label={{ value: `CV Veto (${thresholds.cvVeto})`, position: 'top', fill: 'red', fontSize: 12 }}
+                                                />
+                                                <ReferenceLine
+                                                    x={thresholds.cvHuman}
+                                                    stroke="green"
+                                                    strokeWidth={2}
+                                                    strokeDasharray="5 5"
+                                                    label={{ value: `CV Human (${thresholds.cvHuman})`, position: 'top', fill: 'green', fontSize: 12 }}
+                                                />
                                             </BarChart>
                                         </ResponsiveContainer>
                                     </div>
@@ -719,10 +925,10 @@ const StylisticFingerprintAnalyzer = () => {
                                                     <td className="text-right p-2">{text.metadiscourse.density.toFixed(2)}</td>
                                                     <td className="p-2">
                                                         <span className={`px-2 py-1 rounded text-xs font-semibold ${text.overallRisk.includes('Human')
-                                                                ? 'bg-green-100 text-green-800'
-                                                                : text.overallRisk.includes('AI')
-                                                                    ? 'bg-red-100 text-red-800'
-                                                                    : 'bg-yellow-100 text-yellow-800'
+                                                            ? 'bg-green-100 text-green-800'
+                                                            : text.overallRisk.includes('AI')
+                                                                ? 'bg-red-100 text-red-800'
+                                                                : 'bg-yellow-100 text-yellow-800'
                                                             }`}>
                                                             {text.overallRisk.split(' - ')[0]}
                                                         </span>
