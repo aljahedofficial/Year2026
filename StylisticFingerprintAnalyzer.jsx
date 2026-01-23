@@ -8,6 +8,7 @@ import {
     LineChart,
     Pie,
     PieChart,
+    ReferenceLine,
     ResponsiveContainer,
     Scatter,
     ScatterChart,
@@ -29,6 +30,7 @@ const StylisticFingerprintAnalyzer = () => {
         mdDensity: 10.0
     });
     const [showCalibration, setShowCalibration] = useState(false);
+    const [groundTruthLabels, setGroundTruthLabels] = useState({});
     const chartRef = useRef(null);
 
     // Metadiscourse categories based on Hyland (2005)
@@ -254,9 +256,115 @@ const StylisticFingerprintAnalyzer = () => {
         };
     };
 
+    // Calculate Z-scores for all texts
+    const calculateZScores = () => {
+        if (texts.length < 2) return [];
+
+        // Extract values for each metric
+        const cvValues = texts.map(t => parseFloat(t.cv));
+        const sttrValues = texts.map(t => parseFloat(t.sttr));
+        const mdValues = texts.map(t => t.metadiscourse.density);
+
+        // Calculate mean and standard deviation
+        const calcMean = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
+        const calcStdDev = (arr, mean) => {
+            const variance = arr.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / arr.length;
+            return Math.sqrt(variance);
+        };
+
+        const cvMean = calcMean(cvValues);
+        const cvStdDev = calcStdDev(cvValues, cvMean);
+        const sttrMean = calcMean(sttrValues);
+        const sttrStdDev = calcStdDev(sttrValues, sttrMean);
+        const mdMean = calcMean(mdValues);
+        const mdStdDev = calcStdDev(mdValues, mdMean);
+
+        // Calculate Z-scores for each text
+        return texts.map((text, idx) => ({
+            filename: text.filename,
+            cvZScore: cvStdDev !== 0 ? ((cvValues[idx] - cvMean) / cvStdDev).toFixed(3) : '0.000',
+            sttrZScore: sttrStdDev !== 0 ? ((sttrValues[idx] - sttrMean) / sttrStdDev).toFixed(3) : '0.000',
+            mdZScore: mdStdDev !== 0 ? ((mdValues[idx] - mdMean) / mdStdDev).toFixed(3) : '0.000'
+        }));
+    };
+
+    // Calculate Confusion Matrix
+    const calculateConfusionMatrix = () => {
+        if (texts.length === 0) return null;
+
+        let tp = 0, fp = 0, tn = 0, fn = 0;
+        let labeled = 0;
+
+        texts.forEach((text, idx) => {
+            const groundTruth = groundTruthLabels[idx];
+            if (!groundTruth) return; // Skip unlabeled texts
+
+            labeled++;
+            const predicted = text.overallRisk;
+
+            // Ground truth: 'Human' or 'AI'
+            // Predicted: 'HUMAN', 'AI / HIGH RISK', or 'BORDERLINE'
+            const isActuallyHuman = groundTruth === 'Human';
+            const isPredictedHuman = predicted === 'HUMAN';
+
+            if (isActuallyHuman && isPredictedHuman) tp++;
+            else if (!isActuallyHuman && isPredictedHuman) fp++;
+            else if (!isActuallyHuman && !isPredictedHuman) tn++;
+            else if (isActuallyHuman && !isPredictedHuman) fn++;
+        });
+
+        // Calculate metrics
+        const sensitivity = tp + fn > 0 ? tp / (tp + fn) : 0;
+        const specificity = tn + fp > 0 ? tn / (tn + fp) : 0;
+        const accuracy = labeled > 0 ? (tp + tn) / labeled : 0;
+        const precision = tp + fp > 0 ? tp / (tp + fp) : 0;
+
+        return {
+            tp,
+            fp,
+            tn,
+            fn,
+            labeled,
+            sensitivity: sensitivity.toFixed(3),
+            specificity: specificity.toFixed(3),
+            accuracy: accuracy.toFixed(3),
+            precision: precision.toFixed(3)
+        };
+    };
+
+    // Calculate Youden's J Index
+    const calculateYoudensJ = () => {
+        const cm = calculateConfusionMatrix();
+        if (!cm || cm.labeled === 0) return null;
+
+        const sensitivity = parseFloat(cm.sensitivity);
+        const specificity = parseFloat(cm.specificity);
+        const youdensJ = sensitivity + specificity - 1;
+
+        return {
+            value: youdensJ.toFixed(3),
+            sensitivity: cm.sensitivity,
+            specificity: cm.specificity,
+            interpretation: youdensJ > 0.5 ? 'Good' : youdensJ > 0 ? 'Fair' : 'Poor'
+        };
+    };
+
+    // Handle ground truth label change
+    const handleGroundTruthChange = (index, label) => {
+        setGroundTruthLabels({
+            ...groundTruthLabels,
+            [index]: label
+        });
+    };
+
+
     // Export to CSV
     const exportToCSV = () => {
         if (texts.length === 0) return;
+
+        const zScores = calculateZScores();
+        const confusionMatrix = calculateConfusionMatrix();
+        const youdensJ = calculateYoudensJ();
 
         // Threshold settings header
         const thresholdInfo = [
@@ -265,11 +373,29 @@ const StylisticFingerprintAnalyzer = () => {
             `CV Human Threshold: ${thresholds.cvHuman}`,
             `STTR Threshold: ${thresholds.sttr}`,
             `MD Density Threshold: ${thresholds.mdDensity}`,
-            '', // Empty line separator
+            '',
         ];
 
-        const headers = ['Filename', 'Word Count', 'Sentence Count', 'STTR', 'CV', 'Metadiscourse Density', 'Avg Sentence Length', 'Risk Assessment'];
-        const rows = texts.map(t => [
+        // Statistical metrics
+        const statsInfo = [];
+        if (confusionMatrix && confusionMatrix.labeled > 0) {
+            statsInfo.push(
+                `Statistical Metrics (${confusionMatrix.labeled} labeled samples):`,
+                `True Positives: ${confusionMatrix.tp}`,
+                `False Positives: ${confusionMatrix.fp}`,
+                `True Negatives: ${confusionMatrix.tn}`,
+                `False Negatives: ${confusionMatrix.fn}`,
+                `Accuracy: ${confusionMatrix.accuracy}`,
+                `Sensitivity: ${confusionMatrix.sensitivity}`,
+                `Specificity: ${confusionMatrix.specificity}`,
+                `Precision: ${confusionMatrix.precision}`,
+                youdensJ ? `Youden's J Index: ${youdensJ.value} (${youdensJ.interpretation})` : '',
+                ''
+            );
+        }
+
+        const headers = ['Filename', 'Word Count', 'Sentence Count', 'STTR', 'CV', 'Metadiscourse Density', 'Avg Sentence Length', 'Risk Assessment', 'CV Z-Score', 'STTR Z-Score', 'MD Z-Score', 'Ground Truth'];
+        const rows = texts.map((t, idx) => [
             t.filename,
             t.wordCount,
             t.sentenceCount,
@@ -277,10 +403,14 @@ const StylisticFingerprintAnalyzer = () => {
             t.cv,
             t.metadiscourse.density.toFixed(2),
             t.avgSentenceLength,
-            t.overallRisk
+            t.overallRisk,
+            zScores[idx]?.cvZScore || 'N/A',
+            zScores[idx]?.sttrZScore || 'N/A',
+            zScores[idx]?.mdZScore || 'N/A',
+            groundTruthLabels[idx] || 'Unlabeled'
         ]);
 
-        const csvContent = [...thresholdInfo, headers.join(','), ...rows.map(row => row.join(','))].join('\n');
+        const csvContent = [...thresholdInfo, ...statsInfo, headers.join(','), ...rows.map(row => row.join(','))].join('\n');
         const blob = new Blob([csvContent], { type: 'text/csv' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -288,6 +418,7 @@ const StylisticFingerprintAnalyzer = () => {
         a.download = 'stylistic_analysis.csv';
         a.click();
     };
+
 
     // Export to XLSX
     const exportToXLSX = async () => {
@@ -307,7 +438,11 @@ const StylisticFingerprintAnalyzer = () => {
                 });
             }
 
-            const data = texts.map(t => ({
+            const zScores = calculateZScores();
+            const confusionMatrix = calculateConfusionMatrix();
+            const youdensJ = calculateYoudensJ();
+
+            const data = texts.map((t, idx) => ({
                 'Filename': t.filename,
                 'Word Count': t.wordCount,
                 'Sentence Count': t.sentenceCount,
@@ -315,7 +450,11 @@ const StylisticFingerprintAnalyzer = () => {
                 'CV (Burstiness)': t.cv,
                 'Metadiscourse Density': t.metadiscourse.density.toFixed(2),
                 'Avg Sentence Length': t.avgSentenceLength,
-                'Risk Assessment': t.overallRisk
+                'Risk Assessment': t.overallRisk,
+                'CV Z-Score': zScores[idx]?.cvZScore || 'N/A',
+                'STTR Z-Score': zScores[idx]?.sttrZScore || 'N/A',
+                'MD Z-Score': zScores[idx]?.mdZScore || 'N/A',
+                'Ground Truth': groundTruthLabels[idx] || 'Unlabeled'
             }));
 
             // Create threshold settings sheet
@@ -326,11 +465,39 @@ const StylisticFingerprintAnalyzer = () => {
                 { Setting: 'MD Density Threshold', Value: thresholds.mdDensity }
             ];
 
+            // Create statistical metrics sheet
+            const statsData = [];
+            if (confusionMatrix && confusionMatrix.labeled > 0) {
+                statsData.push(
+                    { Metric: 'Labeled Samples', Value: confusionMatrix.labeled },
+                    { Metric: 'True Positives', Value: confusionMatrix.tp },
+                    { Metric: 'False Positives', Value: confusionMatrix.fp },
+                    { Metric: 'True Negatives', Value: confusionMatrix.tn },
+                    { Metric: 'False Negatives', Value: confusionMatrix.fn },
+                    { Metric: 'Accuracy', Value: confusionMatrix.accuracy },
+                    { Metric: 'Sensitivity (Recall)', Value: confusionMatrix.sensitivity },
+                    { Metric: 'Specificity', Value: confusionMatrix.specificity },
+                    { Metric: 'Precision', Value: confusionMatrix.precision }
+                );
+                if (youdensJ) {
+                    statsData.push(
+                        { Metric: "Youden's J Index", Value: youdensJ.value },
+                        { Metric: 'J Index Interpretation', Value: youdensJ.interpretation }
+                    );
+                }
+            }
+
             const ws = window.XLSX.utils.json_to_sheet(data);
             const wsThresholds = window.XLSX.utils.json_to_sheet(thresholdData);
             const wb = window.XLSX.utils.book_new();
             window.XLSX.utils.book_append_sheet(wb, ws, 'Analysis');
             window.XLSX.utils.book_append_sheet(wb, wsThresholds, 'Calibration Settings');
+
+            if (statsData.length > 0) {
+                const wsStats = window.XLSX.utils.json_to_sheet(statsData);
+                window.XLSX.utils.book_append_sheet(wb, wsStats, 'Statistical Metrics');
+            }
+
             window.XLSX.writeFile(wb, 'stylistic_analysis.xlsx');
         } catch (error) {
             console.error('Error exporting to XLSX:', error);
@@ -626,6 +793,15 @@ const StylisticFingerprintAnalyzer = () => {
                                     }`}
                             >
                                 Combined Corpus
+                            </button>
+                            <button
+                                onClick={() => setActiveTab('statistics')}
+                                className={`px-6 py-3 rounded-t-lg font-semibold transition-colors ${activeTab === 'statistics'
+                                    ? 'bg-white text-blue-700 shadow-md'
+                                    : 'bg-slate-200 text-slate-600 hover:bg-slate-300'
+                                    }`}
+                            >
+                                Statistical Analysis
                             </button>
                         </div>
 
@@ -938,6 +1114,191 @@ const StylisticFingerprintAnalyzer = () => {
                                         </tbody>
                                     </table>
                                 </div>
+                            </div>
+                        )}
+
+                        {/* Statistical Analysis Tab */}
+                        {activeTab === 'statistics' && (
+                            <div className="space-y-6">
+                                {/* Ground Truth Labeling */}
+                                <div className="bg-white rounded-lg shadow-md p-6">
+                                    <h3 className="text-xl font-semibold text-slate-700 mb-4">Ground Truth Labeling</h3>
+                                    <p className="text-sm text-slate-600 mb-4">
+                                        Label each text as "Human" or "AI" to enable confusion matrix and Youden's J index calculations.
+                                    </p>
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full text-sm">
+                                            <thead>
+                                                <tr className="border-b-2 border-slate-300">
+                                                    <th className="text-left p-2 font-semibold">Filename</th>
+                                                    <th className="text-left p-2 font-semibold">Predicted</th>
+                                                    <th className="text-left p-2 font-semibold">Ground Truth</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {texts.map((text, idx) => (
+                                                    <tr key={idx} className="border-b border-slate-200 hover:bg-slate-50">
+                                                        <td className="p-2">{text.filename}</td>
+                                                        <td className="p-2">
+                                                            <span className={`px-2 py-1 rounded text-xs font-semibold ${text.overallRisk.includes('Human')
+                                                                ? 'bg-green-100 text-green-800'
+                                                                : text.overallRisk.includes('AI')
+                                                                    ? 'bg-red-100 text-red-800'
+                                                                    : 'bg-yellow-100 text-yellow-800'
+                                                                }`}>
+                                                                {text.overallRisk}
+                                                            </span>
+                                                        </td>
+                                                        <td className="p-2">
+                                                            <select
+                                                                value={groundTruthLabels[idx] || ''}
+                                                                onChange={(e) => handleGroundTruthChange(idx, e.target.value)}
+                                                                className="p-1 border border-slate-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500"
+                                                            >
+                                                                <option value="">Unlabeled</option>
+                                                                <option value="Human">Human</option>
+                                                                <option value="AI">AI</option>
+                                                            </select>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+
+                                {/* Z-Scores */}
+                                {calculateZScores().length > 0 && (
+                                    <div className="bg-white rounded-lg shadow-md p-6">
+                                        <h3 className="text-xl font-semibold text-slate-700 mb-4">Z-Scores (Standardized Metrics)</h3>
+                                        <p className="text-sm text-slate-600 mb-4">
+                                            Z-scores show how many standard deviations each text's metrics are from the corpus mean. Values beyond ±2 are considered outliers.
+                                        </p>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-sm">
+                                                <thead>
+                                                    <tr className="border-b-2 border-slate-300">
+                                                        <th className="text-left p-2 font-semibold">Filename</th>
+                                                        <th className="text-right p-2 font-semibold">CV Z-Score</th>
+                                                        <th className="text-right p-2 font-semibold">STTR Z-Score</th>
+                                                        <th className="text-right p-2 font-semibold">MD Z-Score</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {calculateZScores().map((zScore, idx) => (
+                                                        <tr key={idx} className="border-b border-slate-200 hover:bg-slate-50">
+                                                            <td className="p-2">{zScore.filename}</td>
+                                                            <td className={`text-right p-2 font-mono ${Math.abs(parseFloat(zScore.cvZScore)) > 2 ? 'text-red-600 font-bold' : ''}`}>
+                                                                {zScore.cvZScore}
+                                                            </td>
+                                                            <td className={`text-right p-2 font-mono ${Math.abs(parseFloat(zScore.sttrZScore)) > 2 ? 'text-red-600 font-bold' : ''}`}>
+                                                                {zScore.sttrZScore}
+                                                            </td>
+                                                            <td className={`text-right p-2 font-mono ${Math.abs(parseFloat(zScore.mdZScore)) > 2 ? 'text-red-600 font-bold' : ''}`}>
+                                                                {zScore.mdZScore}
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Confusion Matrix */}
+                                {(() => {
+                                    const cm = calculateConfusionMatrix();
+                                    return cm && cm.labeled > 0 ? (
+                                        <div className="bg-white rounded-lg shadow-md p-6">
+                                            <h3 className="text-xl font-semibold text-slate-700 mb-4">Confusion Matrix</h3>
+                                            <p className="text-sm text-slate-600 mb-4">
+                                                Based on {cm.labeled} labeled samples out of {texts.length} total texts.
+                                            </p>
+
+                                            {/* Confusion Matrix Grid */}
+                                            <div className="grid grid-cols-3 gap-2 max-w-md mb-6">
+                                                <div></div>
+                                                <div className="text-center font-semibold text-sm">Predicted Human</div>
+                                                <div className="text-center font-semibold text-sm">Predicted AI</div>
+
+                                                <div className="font-semibold text-sm flex items-center">Actual Human</div>
+                                                <div className="bg-green-100 border-2 border-green-500 p-4 text-center rounded-lg">
+                                                    <div className="text-2xl font-bold text-green-700">{cm.tp}</div>
+                                                    <div className="text-xs text-green-600">True Positive</div>
+                                                </div>
+                                                <div className="bg-red-100 border-2 border-red-500 p-4 text-center rounded-lg">
+                                                    <div className="text-2xl font-bold text-red-700">{cm.fn}</div>
+                                                    <div className="text-xs text-red-600">False Negative</div>
+                                                </div>
+
+                                                <div className="font-semibold text-sm flex items-center">Actual AI</div>
+                                                <div className="bg-red-100 border-2 border-red-500 p-4 text-center rounded-lg">
+                                                    <div className="text-2xl font-bold text-red-700">{cm.fp}</div>
+                                                    <div className="text-xs text-red-600">False Positive</div>
+                                                </div>
+                                                <div className="bg-green-100 border-2 border-green-500 p-4 text-center rounded-lg">
+                                                    <div className="text-2xl font-bold text-green-700">{cm.tn}</div>
+                                                    <div className="text-xs text-green-600">True Negative</div>
+                                                </div>
+                                            </div>
+
+                                            {/* Performance Metrics */}
+                                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                                <div className="p-4 bg-blue-50 rounded-lg">
+                                                    <div className="text-sm text-slate-600">Accuracy</div>
+                                                    <div className="text-2xl font-bold text-blue-700">{cm.accuracy}</div>
+                                                </div>
+                                                <div className="p-4 bg-green-50 rounded-lg">
+                                                    <div className="text-sm text-slate-600">Sensitivity (Recall)</div>
+                                                    <div className="text-2xl font-bold text-green-700">{cm.sensitivity}</div>
+                                                </div>
+                                                <div className="p-4 bg-purple-50 rounded-lg">
+                                                    <div className="text-sm text-slate-600">Specificity</div>
+                                                    <div className="text-2xl font-bold text-purple-700">{cm.specificity}</div>
+                                                </div>
+                                                <div className="p-4 bg-orange-50 rounded-lg">
+                                                    <div className="text-sm text-slate-600">Precision</div>
+                                                    <div className="text-2xl font-bold text-orange-700">{cm.precision}</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ) : null;
+                                })()}
+
+                                {/* Youden's J Index */}
+                                {(() => {
+                                    const youdensJ = calculateYoudensJ();
+                                    return youdensJ ? (
+                                        <div className="bg-white rounded-lg shadow-md p-6">
+                                            <h3 className="text-xl font-semibold text-slate-700 mb-4">Youden's J Index</h3>
+                                            <p className="text-sm text-slate-600 mb-4">
+                                                Youden's J Index = Sensitivity + Specificity - 1. It ranges from -1 to 1, with higher values indicating better performance.
+                                            </p>
+                                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                                <div className="p-6 bg-gradient-to-br from-indigo-50 to-blue-50 rounded-lg border-l-4 border-indigo-600">
+                                                    <div className="text-sm text-slate-600 mb-1">J Index Value</div>
+                                                    <div className="text-4xl font-bold text-indigo-700">{youdensJ.value}</div>
+                                                </div>
+                                                <div className="p-6 bg-gradient-to-br from-green-50 to-emerald-50 rounded-lg border-l-4 border-green-600">
+                                                    <div className="text-sm text-slate-600 mb-1">Interpretation</div>
+                                                    <div className="text-2xl font-bold text-green-700">{youdensJ.interpretation}</div>
+                                                </div>
+                                                <div className="p-6 bg-gradient-to-br from-purple-50 to-pink-50 rounded-lg border-l-4 border-purple-600">
+                                                    <div className="text-sm text-slate-600 mb-1">Formula</div>
+                                                    <div className="text-sm font-mono text-purple-700">
+                                                        {youdensJ.sensitivity} + {youdensJ.specificity} - 1
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="bg-yellow-50 border-l-4 border-yellow-500 p-4 rounded-lg">
+                                            <p className="text-sm text-yellow-800">
+                                                <strong>Note:</strong> Label at least one text to see confusion matrix and Youden's J Index.
+                                            </p>
+                                        </div>
+                                    );
+                                })()}
                             </div>
                         )}
                     </>

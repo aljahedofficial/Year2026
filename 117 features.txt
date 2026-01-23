@@ -1,0 +1,124 @@
+﻿All 117 Features: Top to Bottom Priority
+TIER 1: FOUNDATION (Already Implemented)
+1. Word count
+2. Sentence count
+3. Average sentence length
+4. Standardized Type-Token Ratio (STTR)
+5. Cumulative TTR curve
+6. Lexical first-appearance distribution
+7. Sentence-length coefficient of variation (CV) — burstiness
+8. CV veto rule (CV < threshold → AI/HIGH RISK)
+9. Metadiscourse: Transitions (however, therefore, moreover) per 1,000 words
+10. Metadiscourse: Hedges (might, perhaps, could)
+11. Metadiscourse: Boosters (clearly, undoubtedly, must)
+12. Metadiscourse: Attitude markers (unfortunately, surprisingly)
+13. Metadiscourse: Self-mention pronouns (I, we, my, our)
+14. Metadiscourse: Engagement markers (consider, note, imagine)
+15. Total metadiscourse density (per 1,000 words)
+16. Three-factor risk model (CV, STTR, Metadiscourse)
+17. Human/AI/Ambiguous classification
+18. Z-score calculation (per metric)
+19. Confusion matrix (TP, FP, TN, FN)
+20. Youden's J index
+TIER 2: CRITICAL ADDITIONS (Core Thesis Alignment)
+21. Burrows's Delta (stylometric distance)
+22. Function word frequency profile (top 50)
+23. Function word frequency profile (top 100)
+24. Pronoun distribution (1st/2nd/3rd person)
+25. Hapax legomena ratio (once-only words)
+26. Dis legomena ratio (twice-only words)
+27. Academic Word List (AWL) coverage
+28. Word frequency bands (K1/K2/off-list)
+29. Lexical density (content words / total words)
+30. Average word length (graphemes)
+31. Multi-syllabic word ratio (≥3 syllables)
+32. Sentence length standard deviation
+33. Sentence complexity distribution (simple/compound/complex)
+34. Subordination depth
+35. Clauses per sentence
+36. T-unit length
+37. Dependent clause ratio
+38. Code glosses (i.e., e.g., in other words)
+39. Frame markers (finally, first, to conclude)
+40. Evidentials (according to, based on)
+41. Directives (consider, note, see)
+42. Reader pronouns (you, your)
+43. Lexical chains — semantic continuity
+44. Reference chains (anaphoric/cataphoric)
+45. Lexical repetition ratio
+TIER 3: HIGH PRIORITY (Essential for Analysis)
+46. VOCD-D (Malvern & Richards semantic diversity)
+47. Moving-Average Type-Token Ratio (MATTR)
+48. Measure of Textual Lexical Diversity (MTLD)
+49. Rare word ratio / Lexical sophistication index (<5 ipm in COCA)
+50. Content-to-function word ratio
+51. Type-token ratio of open-class items only (nouns, verbs, adj, adv)
+52. Nominalization density (–tion/–ness/–ment/–ity per 1,000 tokens)
+53. Nominal vs. verbal style ratio
+54. Passive voice density
+55. Article error patterns (the/a/an omission/misuse)
+56. Preposition error patterns — transfer errors
+57. L2 formulaic sequences — non-native patterns
+58. Verb tense consistency — temporal coherence
+59. Reporting verb analysis (argue, claim, suggest)
+60. Citation pattern analysis
+61. Genre moves (Establishing territory/niche — CARS model)
+62. Citation shell-noun patterns (this + noun + that-clause)
+63. Flesch Reading Ease
+64. Flesch-Kincaid Grade Level
+65. Gunning Fog Index
+TIER 4: MEDIUM PRIORITY (Enrichment & Depth)
+66. Clause length (T-units)
+67. Subordinate-clause ratio (finite + non-finite)
+68. Left-branching depth (words before main verb)
+69. Right-branching depth (post-verbal expansion)
+70. Overall syntactic complexity index
+71. Passive agent retention ("by-phrase")
+72. Light-verb construction ratio (make a decision)
+73. Multi-word verb ratio (phrasal/prepositional verbs)
+74. It-cleft frequency (It is X that...)
+75. Wh-cleft frequency (What I argue is...)
+76. Existential there density
+77. Inversion after negative adverbials (Never have I seen...)
+78. Conjunction types analysis — logical connectors
+79. Discourse markers (furthermore, however, therefore)
+80. Anaphoric demonstrative density (this/these + nominal)
+81. Topic shift frequency
+82. Paragraph length in sentences
+83. Paragraph length variation
+84. Topic-sentence position (initial vs. delayed)
+85. Sentence opener diversity
+86. Repetitive sentence pattern detection
+87. Sentence opener POS analysis
+88. Lexical cohesion via semantic overlap (Jaccard of adjacent sentences)
+89. Impersonal construction frequency
+90. Contraction usage — informality markers
+91. Determiner patterns (the/a/an)
+92. Preposition distribution frequency
+93. Hedging ratio (hedges per 100 words)
+94. Boosting ratio (boosters per 100 words)
+95. Epistemic stance adverbs (probably, certainly, arguably)
+TIER 5: LOWER PRIORITY (Theoretical Depth)
+96. Material processes (action verbs — Halliday)
+97. Mental processes (cognition verbs — Halliday)
+98. Relational processes (be/have — Halliday)
+99. Dynamic vs. stative verb ratio
+100. Present-perfect ratio (academic prose)
+101. Tense-shift inconsistency index (within paragraph)
+102. Noun-to-verb ratio
+103. Adjective-to-noun ratio
+104. Adverb-to-verb ratio
+105. Type-token ratio of adjectives
+106. Coleman-Liau Index
+107. Overall readability composite
+108. Shell-noun type variety (reason, fact, idea, problem)
+109. Percentage of high-frequency Anglo-Saxon core (West list top 1,000)
+110. Key-key-words (vs. reference corpus)
+111. Moving-window TTR decay curve
+112. Type-token ratio of adjectives (duplicate - ignore)
+113. Genitive alternation (of vs. 's)
+114. Dative alternation (give him it vs. give it to him)
+115. Pied-piping vs. preposition stranding
+TIER 6: OPTIONAL (Nice-to-Have)
+116. Idiom-token ratio
+117. Adjective ordering violations
